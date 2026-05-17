@@ -63,50 +63,47 @@ func extractWebFiles() error {
 		}
 	}
 
-	entries, err := htmlFiles.ReadFile("html/index.html")
+	_, err := htmlFiles.ReadFile("html/index.html")
 	if err != nil {
 		return fmt.Errorf("读取嵌入文件失败: %v", err)
 	}
-	_ = entries
 
-	localHtmlDir := "html"
-
-	err = filepath.Walk(localHtmlDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			relPath, _ := filepath.Rel(localHtmlDir, path)
-			if relPath != "." {
-				targetDir := filepath.Join(webDir, relPath)
-				os.MkdirAll(targetDir, 0755)
-			}
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(localHtmlDir, path)
-		targetPath := filepath.Join(webDir, relPath)
-
-		embedPath := filepath.ToSlash(filepath.Join(localHtmlDir, relPath))
-
-		content, err := htmlFiles.ReadFile(embedPath)
-		if err != nil {
-			return fmt.Errorf("读取嵌入文件 %s 失败: %v", embedPath, err)
-		}
-
-		if err := ioutil.WriteFile(targetPath, content, 0644); err != nil {
-			return fmt.Errorf("写入文件 %s 失败: %v", targetPath, err)
-		}
-
-		return nil
-	})
-
+	err = extractDir(htmlFiles, "html", webDir)
 	if err != nil {
 		return fmt.Errorf("解压文件失败: %v", err)
 	}
 
 	fmt.Println("静态文件已解压到 web 目录")
+	return nil
+}
+
+func extractDir(fsys embed.FS, srcDir, destDir string) error {
+	entries, err := fsys.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("读取目录 %s 失败: %v", srcDir, err)
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.ToSlash(filepath.Join(srcDir, entry.Name()))
+		destPath := filepath.Join(destDir, entry.Name())
+
+		if entry.IsDir() {
+			if err := os.MkdirAll(destPath, 0755); err != nil {
+				return fmt.Errorf("创建目录 %s 失败: %v", destPath, err)
+			}
+			if err := extractDir(fsys, srcPath, destPath); err != nil {
+				return err
+			}
+		} else {
+			content, err := fsys.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("读取文件 %s 失败: %v", srcPath, err)
+			}
+			if err := ioutil.WriteFile(destPath, content, 0644); err != nil {
+				return fmt.Errorf("写入文件 %s 失败: %v", destPath, err)
+			}
+		}
+	}
 	return nil
 }
 
