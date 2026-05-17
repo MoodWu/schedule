@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>每日事项安排</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1 id="appTitle">日期</h1>
+          <p id="daySummary">正在载入今天的安排</p>
+        </div>
+        <nav class="view-tabs" aria-label="页面切换">
+          <button class="tab-button active" id="scheduleTab" type="button">时间安排</button>
+          <button class="tab-button" id="timerTab" type="button">番茄时钟</button>
+        </nav>
+      </header>
+
+      <section id="scheduleView" class="view active-view" aria-labelledby="scheduleTab">
+        <section class="workspace">
+          <aside class="task-panel" aria-label="任务录入">
+            <div class="task-panel-header">
+              <h2>当天任务</h2>
+              <div class="panel-controls">
+                <label class="date-control">
+                  <input id="dateInput" type="date" />
+                </label>
+                <button id="chooseFileBtn" class="icon-button" type="button" title="绑定 JSON 文件">
+                  <img class="icon-svg" src="open.svg" alt="绑定">
+                </button>
+                <button id="exportBtn" class="icon-button" type="button" title="导出 JSON">
+                  <img class="icon-svg" src="export.svg" alt="导出">
+                </button>
+              </div>
+            </div>
+            <form id="taskForm" class="task-form">
+              <label>
+                <span>任务名称</span>
+                <input id="taskTitle" type="text" placeholder="例如：数学练习册" required />
+              </label>
+              <label class="description-label">
+                <span>任务说明</span>
+                <textarea id="taskDescription" rows="2" placeholder="可选的详细说明"></textarea>
+              </label>
+              <div class="form-row">
+                <label>
+                  <span>类型</span>
+                  <select id="taskType">
+                    <option value="school">学校作业</option>
+                    <option value="home">家庭作业</option>
+                  </select>
+                </label>
+                <label>
+                  <span>开始时间</span>
+                  <input id="taskStart" type="time" />
+                </label>
+                <label>
+                  <span>预计分钟</span>
+                  <input id="taskDuration" type="number" min="5" max="240" step="5" value="30" required />
+                </label>
+              </div>
+              <button class="primary-button" type="submit">添加任务</button>
+            </form>
+
+            <div class="legend" aria-label="颜色说明">
+              <span><i class="swatch school"></i>学校作业</span>
+              <span><i class="swatch home"></i>家庭作业</span>
+            </div>
+
+            <div class="unscheduled">
+              <h2>待安排</h2>
+              <div id="taskList" class="task-list" aria-live="polite"></div>
+            </div>
+          </aside>
+
+          <section class="timeline-panel" aria-label="当天时间安排">
+            <div class="timeline-header">
+              <div class="timeline-title-group">
+                <button id="toggleTaskFormBtn" class="icon-button" type="button" title="折叠任务面板">
+                  <img class="icon-svg" src="left.svg" alt="折叠">
+                </button>
+                <div>
+                  <h2 id="timelineTitle">当天安排</h2>
+                  <p id="timelineHint">把左侧任务拖到时间段中</p>
+                </div>
+              </div>
+              <div class="timeline-controls" aria-label="时间表控制">
+                <button id="zoomOutBtn" class="icon-button" type="button" title="缩小">
+                  <img class="icon-svg" src="zoomout.svg" alt="缩小">
+                </button>
+                <button id="zoomInBtn" class="icon-button" type="button" title="放大">
+                  <img class="icon-svg" src="zoomin.svg" alt="放大">
+                </button>
+                <button id="toggleAxisBtn" class="icon-button" type="button" title="横向时间轴">
+                  <img class="icon-svg" src="rotate.svg" alt="切换方向">
+                </button>
+                <button id="actualOrderBtn" class="icon-button" type="button" title="按实际时间">
+                  <img class="icon-svg" src="clock.svg" alt="按实际时间">
+                </button>
+                <button id="clearScheduleBtn" class="icon-button danger" type="button" title="清空当天安排">
+                  <img class="icon-svg" src="del.svg" alt="清空">
+                </button>
+              </div>
+            </div>
+            <div id="timeline" class="timeline"></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="timerView" class="view timer-view" aria-labelledby="timerTab">
+        <div id="emptyTimer" class="empty-timer">
+          <p>从时间安排中的事项点击“开始”，这里会进入倒计时。</p>
+        </div>
+
+        <div id="activeTimer" class="timer-stage" hidden>
+          <div class="timer-meta">
+            <span id="timerCategory" class="category-pill">学校作业</span>
+            <span id="timerPlan">计划 00:00 - 00:00</span>
+          </div>
+          <h2 id="timerTitle">任务名称</h2>
+          <div id="countdown" class="countdown" aria-live="assertive">00:00</div>
+          <div id="pauseReadout" class="pause-readout" hidden>暂停 00:00</div>
+          <div id="timerActions" class="timer-actions">
+            <button id="pauseBtn" class="ghost-button large" type="button">暂停</button>
+            <button id="completeBtn" class="primary-button large" type="button">完成</button>
+          </div>
+          <div id="resumeOnly" class="timer-actions" hidden>
+            <button id="resumeBtn" class="primary-button large" type="button">恢复</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <template id="taskTemplate">
+      <article class="task-card" draggable="true">
+        <div>
+          <div class="task-info">
+            <strong></strong>
+            <span></span>
+          </div>
+          <p class="task-desc"></p>
+        </div>
+        <button type="button" aria-label="删除任务">×</button>
+      </article>
+    </template>
+
+    <div id="detailModal" class="detail-modal" hidden>
+      <div class="modal-overlay" id="modalOverlay"></div>
+      <div class="modal-content">
+        <button type="button" id="closeModalBtn" class="close-btn" aria-label="关闭">×</button>
+        <h3 id="modalTitle"></h3>
+        <div id="modalInfo"></div>
+        <p id="modalDescription"></p>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

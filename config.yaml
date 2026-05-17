@@ -1,0 +1,15 @@
+username: "Anders"
+rowHeight: 48
+slotMinutes: 30
+dragSnapMinutes: 5
+minZoom: 0.75
+maxZoom: 2.5
+zoomStep: 0.25
+workday:
+  start: "18:00"
+  end: "22:00"
+  title: "工作日晚上安排"
+weekend:
+  start: "08:00"
+  end: "22:00"
+  title: "周末全天安排"
