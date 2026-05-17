@@ -12,6 +12,15 @@
 - 💾 **数据持久化**：任务数据自动保存到本地
 - ⏰ **实时时钟**：显示当前时间
 
+## 界面预览
+
+将您的界面截图保存为 `screenshot.png` 或 `screenshot.jpg` 放到项目根目录，然后更新下面的图片路径。
+![日程安排助手界面预览](image.png)
+![alt text](image-1.png)
+![alt text](image-2.png)
+![alt text](image-3.png)
+
+
 ## 项目结构
 
 ```
