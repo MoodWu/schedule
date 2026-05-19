@@ -1,8 +1,10 @@
+// 本地存储键名
 var STORAGE_KEY = "child-schedule-data-v1";
 var FILE_HANDLE_DB = "child-schedule-file-db";
 var FILE_HANDLE_STORE = "handles";
 var FILE_HANDLE_KEY = "json-handle";
 
+// 默认配置
 var defaultConfig = {
   username: "Anders",
   rowHeight: 48,
@@ -25,18 +27,29 @@ var defaultConfig = {
 
 var config;
 
+// 时间轴缩放比例
 var timelineZoom = 1;
+// 时间轴方向：vertical（纵向）或 horizontal（横向）
 var timelineOrientation = "vertical";
+// 是否使用实际时间排序
 var useActualTimes = false;
+// 触摸事件相关变量
 var touchStartTaskId = null;
 var touchStartTime = 0;
+// 当前正在编辑的任务ID
 var editingTaskId = null;
+// 当前正在拖拽的任务ID
 var draggedTaskId = null;
+// 当前活跃的计时器
 var activeTimer = null;
+// 计时器定时器ID
 var tickId = null;
+// 文件句柄（用于文件系统API）
 var fileHandle = null;
+// 自动保存定时器
 var saveTimer = null;
 
+// 生成唯一标识符
 function generateUUID() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -48,7 +61,7 @@ function generateUUID() {
   });
 }
 
-// 兼容性：Array.prototype.find
+// 兼容性：为旧浏览器添加 Array.prototype.find 方法
 if (!Array.prototype.find) {
   Array.prototype.find = function(predicate) {
     if (this == null) {
@@ -72,7 +85,7 @@ if (!Array.prototype.find) {
   };
 }
 
-// 兼容性：Array.prototype.findIndex
+// 兼容性：为旧浏览器添加 Array.prototype.findIndex 方法
 if (!Array.prototype.findIndex) {
   Array.prototype.findIndex = function(predicate) {
     if (this == null) {
@@ -96,15 +109,112 @@ if (!Array.prototype.findIndex) {
   };
 }
 
+// 任务类型标签映射
 var typeLabels = {
   school: "学校作业",
   home: "家庭作业",
 };
 
+// 默认数据结构
 var defaultData = {
   days: {},
   records: [],
 };
+
+/*
+ * JSON数据格式说明
+ * 
+ * 1. 配置文件格式（config）：
+ * {
+ *   "username": "Anders",              // 用户名
+ *   "rowHeight": 48,                   // 行高（像素）
+ *   "slotMinutes": 30,                 // 时间槽大小（分钟）
+ *   "dragSnapMinutes": 5,              // 拖拽吸附时间（分钟）
+ *   "minZoom": 0.75,                   // 最小缩放比例
+ *   "maxZoom": 2.5,                    // 最大缩放比例
+ *   "zoomStep": 0.25,                  // 缩放步长
+ *   "workday": {                       // 工作日配置
+ *     "start": "18:00",                // 开始时间
+ *     "end": "22:00",                  // 结束时间
+ *     "title": "工作日晚上安排"        // 标题
+ *   },
+ *   "weekend": {                       // 周末配置
+ *     "start": "08:00",
+ *     "end": "22:00",
+ *     "title": "周末全天安排"
+ *   }
+ * }
+ * 
+ * 2. 主数据文件格式（data）：
+ * {
+ *   "days": {                          // 按日期索引的任务数据
+ *     "2026-05-19": {                 // 日期键（YYYY-MM-DD）
+ *       "tasks": [                     // 待安排任务列表
+ *         {
+ *           "id": "uuid-string",      // 任务唯一ID
+ *           "title": "任务标题",       // 任务标题
+ *           "type": "school",          // 任务类型：school（学校作业）或 home（家庭作业）
+ *           "duration": 30,            // 预计时长（分钟）
+ *           "description": "任务说明",  // 任务描述（可选）
+ *           "createdAt": "2026-05-19T10:30:00.000Z"  // 创建时间（ISO格式）
+ *         }
+ *       ],
+ *       "scheduled": [                 // 已安排到时间轴的任务列表
+ *         {
+ *           "id": "uuid-string",      // 安排ID
+ *           "sourceTaskId": "uuid",     // 源任务ID（关联tasks中的任务）
+ *           "title": "任务标题",
+ *           "type": "school",
+ *           "duration": 30,            // 预计时长（分钟）
+ *           "description": "任务说明",
+ *           "date": "2026-05-19",     // 安排日期
+ *           "start": "18:00",         // 开始时间（HH:MM）
+ *           "end": "18:30",           // 结束时间（HH:MM）
+ *           "completedRecordId": "uuid"  // 完成记录ID（可选，表示任务已完成）
+ *         }
+ *       ]
+ *     }
+ *   },
+ *   "records": [                       // 任务完成记录列表
+ *     {
+ *       "id": "uuid-string",          // 记录唯一ID
+ *       "scheduledId": "uuid",         // 关联的已安排任务ID
+ *       "date": "2026-05-19",         // 日期
+ *       "title": "任务标题",
+ *       "type": "school",
+ *       "plannedStart": "18:00",      // 计划开始时间
+ *       "plannedEnd": "18:30",        // 计划结束时间
+ *       "plannedDurationMinutes": 30,  // 计划时长（分钟）
+ *       "actualStart": "2026-05-19T10:00:00.000Z",  // 实际开始时间（ISO格式）
+ *       "actualEnd": "2026-05-19T10:35:00.000Z",    // 实际结束时间（ISO格式）
+ *       "actualElapsedSeconds": 2100,  // 实际总耗时（秒，包含暂停时间）
+ *       "actualDurationSeconds": 2000, // 实际有效耗时（秒，不包含暂停时间）
+ *       "interruptCount": 1,          // 暂停次数
+ *       "interruptedSeconds": 100      // 暂停总时长（秒）
+ *     }
+ *   ]
+ * }
+ * 
+ * 3. 服务器API数据格式：
+ * 
+ * 加载数据（GET /api/loaddata）：
+ * {
+ *   "config": { ... },                // 配置对象（同上）
+ *   "data": { ... }                   // 数据对象（同上）
+ * }
+ * 
+ * 保存数据（POST /api/savedata）：
+ * {
+ *   "config": { ... },                // 配置对象
+ *   "days": { ... },                  // days对象
+ *   "records": [ ... ]                // records数组
+ * }
+ * 
+ * 响应：
+ * {
+ *   "success": true                   // 保存成功标志
+ * }
+ */
 
 var data = null;
 var config = null;
@@ -198,6 +308,7 @@ if (document.attachEvent) {
   onDOMReady();
 }
 
+// 绑定所有事件监听器
 function wireEvents() {
   els.scheduleTab.addEventListener("click", function() { showView("schedule"); });
   els.timerTab.addEventListener("click", function() { showView("timer"); });
@@ -209,6 +320,7 @@ function wireEvents() {
 
   els.toggleTaskFormBtn.addEventListener("click", toggleTaskForm);
 
+  // 任务表单提交事件
   els.taskForm.addEventListener("submit", function(event) {
     event.preventDefault();
     var title = els.taskTitle.value.trim();
@@ -231,6 +343,30 @@ function wireEvents() {
             alert("开始时间必须在 " + range.start + " 到 " + range.end + " 之间。");
             return;
           }
+          
+          // 检查时间冲突
+          var conflictTask = null;
+          var hasOverlap = day.scheduled.some(function(scheduled) {
+            // 跳过已完成的任务
+            if (scheduled.completedRecordId) return false;
+            
+            var scheduledRecord = findRecordForSchedule(scheduled.id);
+            var scheduledDuration = scheduledRecord && scheduledRecord.actualDurationSeconds 
+              ? Math.max(5, Math.ceil(scheduledRecord.actualDurationSeconds / 60)) 
+              : scheduled.duration;
+            var scheduledEnd = addMinutes(scheduled.start, scheduledDuration);
+            
+            if (timeToMinutes(startTime) < timeToMinutes(scheduledEnd) && timeToMinutes(endTime) > timeToMinutes(scheduled.start)) {
+              conflictTask = scheduled;
+              return true;
+            }
+            return false;
+          });
+          if (hasOverlap) {
+            alert("这个时间段与任务 \"" + conflictTask.title + "\" 冲突，请换一个时间。");
+            return;
+          }
+          
           // 从待安排列表移除
           day.tasks.splice(taskIndex, 1);
           // 添加到时间表格
@@ -265,6 +401,29 @@ function wireEvents() {
           return;
         }
         
+        // 检查时间冲突
+        var conflictTask = null;
+        var hasOverlap = day.scheduled.some(function(scheduled) {
+          // 跳过已完成的任务
+          if (scheduled.completedRecordId) return false;
+          
+          var scheduledRecord = findRecordForSchedule(scheduled.id);
+          var scheduledDuration = scheduledRecord && scheduledRecord.actualDurationSeconds 
+            ? Math.max(5, Math.ceil(scheduledRecord.actualDurationSeconds / 60)) 
+            : scheduled.duration;
+          var scheduledEnd = addMinutes(scheduled.start, scheduledDuration);
+          
+          if (timeToMinutes(startTime) < timeToMinutes(scheduledEnd) && timeToMinutes(endTime) > timeToMinutes(scheduled.start)) {
+            conflictTask = scheduled;
+            return true;
+          }
+          return false;
+        });
+        if (hasOverlap) {
+          alert("这个时间段与任务 \"" + conflictTask.title + "\" 冲突，请换一个时间。");
+          return;
+        }
+        
         day.scheduled.push({
           id: generateUUID(),
           sourceTaskId: generateUUID(),
@@ -288,14 +447,15 @@ function wireEvents() {
       }
     }
     
-    // 清空表单
-    els.taskTitle.value = "";
-    els.taskDuration.value = "30";
-    els.taskDescription.value = "";
-    els.taskStart.value = "";
-    persistAndRender();
+  // 清空任务表单
+  els.taskTitle.value = "";
+  els.taskDuration.value = "30";
+  els.taskDescription.value = "";
+  els.taskStart.value = "";
+  persistAndRender();
   });
 
+  // 清空当天安排按钮事件
   els.clearScheduleBtn.addEventListener("click", function() {
     var day = ensureDay(currentDate);
     if (!day.scheduled.length) return;
@@ -303,16 +463,21 @@ function wireEvents() {
     persistAndRender();
   });
 
+  // 文件操作和计时器按钮事件
   els.chooseFileBtn.addEventListener("click", chooseJsonFile);
   els.exportBtn.addEventListener("click", exportJson);
   els.pauseBtn.addEventListener("click", pauseTimer);
   els.resumeBtn.addEventListener("click", resumeTimer);
   els.completeBtn.addEventListener("click", completeTimer);
+  
+  // 时间轴拖拽事件
   els.timeline.addEventListener("dragover", handleTimelineDragOver);
   els.timeline.addEventListener("dragleave", handleTimelineDragLeave);
   els.timeline.addEventListener("drop", handleTimelineDrop);
   els.timeline.addEventListener("touchmove", handleTimelineTouchMove);
   els.timeline.addEventListener("touchend", handleTimelineTouchEnd);
+  
+  // 缩放按钮事件
   els.zoomOutBtn.addEventListener("click", function() {
     timelineZoom = Math.max(config.minZoom, timelineZoom - config.zoomStep);
     renderTimeline();
@@ -321,17 +486,24 @@ function wireEvents() {
     timelineZoom = Math.min(config.maxZoom, timelineZoom + config.zoomStep);
     renderTimeline();
   });
+  
+  // 切换时间轴方向
   els.toggleAxisBtn.addEventListener("click", function() {
     timelineOrientation = timelineOrientation === "vertical" ? "horizontal" : "vertical";
     renderTimeline();
   });
+  
+  // 切换实际/计划时间显示
   els.actualOrderBtn.addEventListener("click", function() {
     useActualTimes = !useActualTimes;
     renderTimeline();
   });
+  
+  // 键盘快捷键和滚轮缩放
   window.addEventListener("keydown", handleZoomShortcut);
   els.timeline.addEventListener("wheel", handleTimelineWheel, { passive: false });
   
+  // 模态框关闭事件
   els.closeModalBtn.addEventListener("click", hideDetailModal);
   els.modalOverlay.addEventListener("click", hideDetailModal);
   window.addEventListener("keydown", function(event) {
@@ -341,6 +513,7 @@ function wireEvents() {
   });
 }
 
+// 显示任务详情模态框
 function showDetailModal(item, record) {
   els.modalTitle.textContent = item.title;
   var info = item.start + " - " + item.end + " · " + item.duration + " 分钟";
@@ -356,10 +529,12 @@ function showDetailModal(item, record) {
   els.detailModal.removeAttribute("hidden");
 }
 
+// 隐藏任务详情模态框
 function hideDetailModal() {
   els.detailModal.setAttribute("hidden", "");
 }
 
+// 切换任务表单的展开/折叠状态
 function toggleTaskForm() {
   var workspace = document.querySelector(".workspace");
   var isCollapsed = workspace.classList.toggle("collapsed");
@@ -376,6 +551,7 @@ function toggleTaskForm() {
   }
 }
 
+// 渲染所有视图
 function render() {
   ensureDay(currentDate);
   renderSummary();
@@ -384,6 +560,7 @@ function render() {
   renderTimer();
 }
 
+// 渲染页面摘要信息（日期、时间范围等）
 function renderSummary() {
   var range = getDayRange(currentDate);
   els.appTitle.textContent = formatChineseDate(currentDate);
@@ -392,6 +569,7 @@ function renderSummary() {
   updateRealtimeClock();
 }
 
+// 渲染待安排任务列表
 function renderTaskList() {
   var day = ensureDay(currentDate);
   els.taskList.innerHTML = "";
@@ -428,22 +606,26 @@ function renderTaskList() {
       els.taskStart.value = "";
       els.taskSubmitBtn.textContent = "保存任务";
     });
+    // 拖拽开始事件
     card.addEventListener("dragstart", function(event) {
       draggedTaskId = task.id;
       card.classList.add("dragging");
       event.dataTransfer.setData("text/plain", task.id);
       event.dataTransfer.effectAllowed = "move";
     });
+    // 拖拽结束事件
     card.addEventListener("dragend", function() {
       draggedTaskId = null;
       hideDropIndicator();
       card.classList.remove("dragging");
     });
+    // 触摸开始事件（移动端拖拽）
     card.addEventListener("touchstart", function(event) {
       touchStartTaskId = task.id;
       touchStartTime = Date.now();
       event.preventDefault();
     });
+    // 触摸移动事件
     card.addEventListener("touchmove", function(event) {
       if (!touchStartTaskId || Date.now() - touchStartTime < 200) return;
       draggedTaskId = touchStartTaskId;
@@ -455,6 +637,7 @@ function renderTaskList() {
       };
       handleTimelineDragOver(pointerEvent);
     });
+    // 触摸结束事件
     card.addEventListener("touchend", function(event) {
       if (draggedTaskId) {
         var touch = event.changedTouches[0];
@@ -468,6 +651,7 @@ function renderTaskList() {
       }
       touchStartTaskId = null;
     });
+    // 删除任务按钮事件
     card.querySelector("button").addEventListener("click", function(event) {
       event.stopPropagation();
       var nextDay = ensureDay(currentDate);
@@ -487,6 +671,7 @@ function renderTaskList() {
   });
 }
 
+// 渲染时间轴视图
 function renderTimeline() {
   var range = getDayRange(currentDate);
   var day = ensureDay(currentDate);
@@ -510,6 +695,7 @@ function renderTimeline() {
   var slotCount = totalMinutes / config.slotMinutes;
   var slotSize = getSlotSize();
 
+  // 创建时间槽
   for (var index = 0; index < slotCount; index += 1) {
     var start = addMinutes(range.start, index * config.slotMinutes);
     var row = document.createElement("div");
@@ -533,6 +719,7 @@ function renderTimeline() {
     els.timeline.appendChild(row);
   }
 
+  // 创建已安排任务层
   var layer = document.createElement("div");
   layer.className = "scheduled-layer";
   if (timelineOrientation === "horizontal") {
@@ -541,6 +728,7 @@ function renderTimeline() {
     layer.style.height = slotCount * slotSize + "px";
   }
 
+  // 按开始时间排序已安排任务
   function sortSchedule(a, b) {
     return getDisplayStartMinutes(a, range.start) - getDisplayStartMinutes(b, range.start);
   }
@@ -558,11 +746,13 @@ function renderTimeline() {
   var laneCount = Math.max(1, Math.max.apply(Math, laneCounts));
   layer.style.setProperty("--lane-count", laneCount);
 
+  // 渲染每个已安排任务卡片
   scheduledItems.slice().forEach(function(entry) {
     layer.appendChild(renderScheduledCard(entry.item, range.start, entry.record, entry.lane, entry.laneCount));
   });
   els.timeline.appendChild(layer);
 
+  // 创建拖拽指示器
   var indicator = document.createElement("div");
   indicator.className = "drop-indicator";
   indicator.hidden = true;
@@ -570,6 +760,7 @@ function renderTimeline() {
   els.timeline.appendChild(indicator);
 }
 
+// 为已安排任务分配显示轨道（避免重叠）
 function assignScheduleLanes(items, dayStart) {
   var lanes = [];
   var entries = items.map(function(item) {
@@ -599,6 +790,7 @@ function assignScheduleLanes(items, dayStart) {
   return entries;
 }
 
+// 处理时间轴拖拽悬停事件
 function handleTimelineDragOver(event) {
   if (!draggedTaskId) return;
   event.preventDefault();
@@ -606,12 +798,14 @@ function handleTimelineDragOver(event) {
   showDropIndicator(dragStart);
 }
 
+// 处理时间轴拖拽离开事件
 function handleTimelineDragLeave(event) {
   if (!event.relatedTarget || !els.timeline.contains(event.relatedTarget)) {
     hideDropIndicator();
   }
 }
 
+// 处理时间轴拖拽放置事件
 function handleTimelineDrop(event) {
   if (!draggedTaskId) return;
   event.preventDefault();
@@ -620,6 +814,7 @@ function handleTimelineDrop(event) {
   scheduleTask(event.dataTransfer.getData("text/plain") || draggedTaskId, dragStart.time);
 }
 
+// 处理时间轴触摸移动事件（移动端）
 function handleTimelineTouchMove(event) {
   if (!draggedTaskId) return;
   event.preventDefault();
@@ -632,6 +827,7 @@ function handleTimelineTouchMove(event) {
   showDropIndicator(dragStart);
 }
 
+// 处理时间轴触摸结束事件（移动端）
 function handleTimelineTouchEnd(event) {
   if (!draggedTaskId) return;
   var touch = event.changedTouches[0];
@@ -645,6 +841,7 @@ function handleTimelineTouchEnd(event) {
   draggedTaskId = null;
 }
 
+// 根据鼠标/触摸位置计算拖拽任务的开始时间
 function getDragStartFromPointer(event) {
   var range = getDayRange(currentDate);
   var rect = els.timeline.getBoundingClientRect();
@@ -666,6 +863,7 @@ function getDragStartFromPointer(event) {
   };
 }
 
+// 显示拖拽放置指示器
 function showDropIndicator(dragStart) {
   var indicator = els.timeline.querySelector(".drop-indicator");
   if (!indicator) return;
@@ -676,6 +874,7 @@ function showDropIndicator(dragStart) {
   indicator.querySelector("span").textContent = "开始 " + dragStart.time;
 }
 
+// 隐藏拖拽放置指示器
 function hideDropIndicator() {
   var indicator = els.timeline.querySelector(".drop-indicator");
   if (indicator) {
@@ -683,6 +882,7 @@ function hideDropIndicator() {
   }
 }
 
+// 渲染已安排任务卡片
 function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   if (lane === undefined) lane = 0;
   if (laneCount === undefined) laneCount = 1;
@@ -900,6 +1100,7 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   return card;
 }
 
+// 构建任务卡片的提示信息
 function buildScheduleTip(item, record) {
   var lines = [
     item.title,
@@ -920,6 +1121,7 @@ function buildScheduleTip(item, record) {
   return lines.join("\n");
 }
 
+// 调整时间轴缩放
 function adjustZoom(delta) {
   var nextZoom = Math.min(config.maxZoom, Math.max(config.minZoom, timelineZoom + delta));
   if (nextZoom === timelineZoom) return;
@@ -927,6 +1129,7 @@ function adjustZoom(delta) {
   renderTimeline();
 }
 
+// 处理键盘缩放快捷键
 function handleZoomShortcut(event) {
   if (!event.ctrlKey) return;
   var key = event.key;
@@ -940,12 +1143,14 @@ function handleZoomShortcut(event) {
   }
 }
 
+// 处理时间轴滚轮缩放
 function handleTimelineWheel(event) {
   if (!event.ctrlKey) return;
   event.preventDefault();
   adjustZoom(event.deltaY < 0 ? config.zoomStep : -config.zoomStep);
 }
 
+// 将任务安排到时间轴
 function scheduleTask(taskId, start) {
   var day = ensureDay(currentDate);
   var task = day.tasks.find(function(item) { return item.id === taskId; });
@@ -953,21 +1158,47 @@ function scheduleTask(taskId, start) {
   if (!task && !scheduledItem) return;
 
   var item = task || scheduledItem;
+  
+  // 如果任务已完成，使用实际时间；否则使用预计时间
+  var record = scheduledItem ? findRecordForSchedule(scheduledItem.id) : null;
+  var duration = record && record.actualDurationSeconds 
+    ? Math.max(5, Math.ceil(record.actualDurationSeconds / 60)) 
+    : item.duration;
+  
   var range = getDayRange(currentDate);
-  var end = addMinutes(start, item.duration);
+  var end = addMinutes(start, duration);
   if (timeToMinutes(end) > timeToMinutes(range.end)) {
     alert("这个任务会超出当天可安排时间，请拖到更早的时间段。");
     return;
   }
 
+  // 检查时间冲突
+  var conflictTask = null;
   var hasOverlap = day.scheduled.some(function(scheduled) {
-    return scheduled.id !== taskId && timeToMinutes(start) < timeToMinutes(scheduled.end) && timeToMinutes(end) > timeToMinutes(scheduled.start);
+    if (scheduled.id === taskId) return false;
+    
+    // 跳过已完成的任务
+    if (scheduled.completedRecordId) return false;
+    
+    var scheduledRecord = findRecordForSchedule(scheduled.id);
+    var scheduledDuration = scheduledRecord && scheduledRecord.actualDurationSeconds 
+      ? Math.max(5, Math.ceil(scheduledRecord.actualDurationSeconds / 60)) 
+      : scheduled.duration;
+    
+    var scheduledEnd = addMinutes(scheduled.start, scheduledDuration);
+    
+    if (timeToMinutes(start) < timeToMinutes(scheduledEnd) && timeToMinutes(end) > timeToMinutes(scheduled.start)) {
+      conflictTask = scheduled;
+      return true;
+    }
+    return false;
   });
   if (hasOverlap) {
-    alert("这个时间段已经有安排了，请换一个时间。");
+    alert("这个时间段与任务 \"" + conflictTask.title + "\" 冲突，请换一个时间。");
     return;
   }
 
+  // 如果是待安排任务，将其移到时间轴；如果是已安排任务，更新其时间
   if (task) {
     day.tasks = day.tasks.filter(function(i) { return i.id !== taskId; });
     day.scheduled.push({
@@ -975,7 +1206,7 @@ function scheduleTask(taskId, start) {
       sourceTaskId: task.id,
       title: task.title,
       type: task.type,
-      duration: task.duration,
+      duration: duration,
       description: task.description || "",
       date: currentDate,
       start,
@@ -984,10 +1215,12 @@ function scheduleTask(taskId, start) {
   } else {
     scheduledItem.start = start;
     scheduledItem.end = end;
+    scheduledItem.duration = duration;
   }
   persistAndRender();
 }
 
+// 开始任务计时器
 function startTimer(item) {
   activeTimer = {
     id: generateUUID(),
@@ -1011,6 +1244,7 @@ function startTimer(item) {
   persistAndRender();
 }
 
+// 暂停计时器
 function pauseTimer() {
   if (!activeTimer || activeTimer.state !== "running") return;
   activeTimer.state = "paused";
@@ -1020,21 +1254,23 @@ function pauseTimer() {
   persistAndRender();
 }
 
+// 恢复计时器
 function resumeTimer() {
   if (!activeTimer || activeTimer.state !== "paused") return;
   var pausedFor = Math.floor((Date.now() - activeTimer.pauseStartedAt) / 1000);
-  activeTimer.interruptCount += 1;
+  activeTimer.interruptCount +=1;
   activeTimer.interruptedSeconds += pausedFor;
   activeTimer.pauseStartedAt = null;
   activeTimer.state = "running";
   persistAndRender();
 }
 
+// 完成计时器并保存记录
 function completeTimer() {
   if (!activeTimer) return;
   if (activeTimer.state === "paused") {
     var pausedFor = Math.floor((Date.now() - activeTimer.pauseStartedAt) / 1000);
-    activeTimer.interruptCount += 1;
+    activeTimer.interruptCount +=1;
     activeTimer.interruptedSeconds += pausedFor;
   }
 
@@ -1070,6 +1306,7 @@ function completeTimer() {
   persistAndRender();
 }
 
+// 渲染计时器界面
 function renderTimer() {
   if (!activeTimer) {
     els.emptyTimer.hidden = true;
@@ -1096,6 +1333,7 @@ function renderTimer() {
   }
 }
 
+// 开始计时器倒计时
 function startTicking() {
   stopTicking();
   tickId = window.setInterval(function() {
@@ -1110,6 +1348,7 @@ function startTicking() {
   }, 1000);
 }
 
+// 停止计时器倒计时
 function stopTicking() {
   if (tickId) {
     clearInterval(tickId);
@@ -1117,6 +1356,7 @@ function stopTicking() {
   }
 }
 
+// 切换视图（日程/计时器）
 function showView(name) {
   var schedule = name === "schedule";
   els.scheduleView.classList.toggle("active-view", schedule);
@@ -1125,6 +1365,7 @@ function showView(name) {
   els.timerTab.classList.toggle("active", !schedule);
 }
 
+// 确保日期数据存在
 function ensureDay(dateKey) {
   if (!data.days[dateKey]) {
     data.days[dateKey] = {
@@ -1135,6 +1376,7 @@ function ensureDay(dateKey) {
   return data.days[dateKey];
 }
 
+// 获取日期的时间范围配置
 function getDayRange(dateKey) {
   var day = new Date(dateKey + "T00:00:00");
   var isWeekend = day.getDay() === 0 || day.getDay() === 6;
@@ -1155,6 +1397,7 @@ function getDayRange(dateKey) {
   }
 }
 
+// 深度克隆对象（用于配置和数据复制）
 function deepClone(obj) {
   if (typeof structuredClone === "function") {
     return structuredClone(obj);
@@ -1162,8 +1405,10 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+// 初始化配置为默认配置
 config = deepClone(defaultConfig);
 
+// 加载配置文件
 function loadProfile(profileJson) {
   if (!profileJson || typeof profileJson !== "object") {
     console.warn("loadProfile: 无效的配置文件");
@@ -1192,6 +1437,7 @@ function loadProfile(profileJson) {
   }
 }
 
+// 从本地存储加载数据
 function loadData() {
   try {
     var saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -1201,6 +1447,7 @@ function loadData() {
   }
 }
 
+// 从服务器加载配置和数据
 function loadFromServer() {
   fetch('/api/loaddata')
     .then(function(response) {
@@ -1233,6 +1480,7 @@ function loadFromServer() {
     });
 }
 
+// 保存配置和数据到服务器
 function saveToServer() {
   if (!data || !config) return;
   var saveData = {
@@ -1263,12 +1511,14 @@ function saveToServer() {
   });
 }
 
+// 保存数据并重新渲染
 function persistAndRender() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data, null, 2));
   render();
   scheduleDiskSave();
 }
 
+// 调度磁盘保存（延迟执行以避免频繁保存）
 function scheduleDiskSave() {
   if (els.saveStatus) {
     els.saveStatus.textContent = "正在保存...";
@@ -1277,6 +1527,7 @@ function scheduleDiskSave() {
   saveTimer = setTimeout(saveToServer, 350);
 }
 
+// 选择JSON文件导入
 function chooseJsonFile() {
   if (!window.showSaveFilePicker) {
     alert("当前浏览器不支持自动写入本地文件。可以继续使用导出 JSON。");
@@ -1304,6 +1555,7 @@ function chooseJsonFile() {
   });
 }
 
+// 保存数据到磁盘文件
 function saveToDisk() {
   if (!fileHandle) return;
   verifyFilePermission(fileHandle).then(function(writableAllowed) {
@@ -1324,6 +1576,7 @@ function saveToDisk() {
   });
 }
 
+// 验证文件写入权限
 function verifyFilePermission(handle) {
   if (!handle.queryPermission || !handle.requestPermission) return Promise.resolve(true);
   var options = { mode: "readwrite" };
@@ -1335,6 +1588,7 @@ function verifyFilePermission(handle) {
   });
 }
 
+// 导出JSON文件
 function exportJson() {
   var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   var url = URL.createObjectURL(blob);
@@ -1345,6 +1599,7 @@ function exportJson() {
   URL.revokeObjectURL(url);
 }
 
+// 尝试恢复文件句柄（用于自动保存）
 function tryRestoreFileHandle() {
   if (!("indexedDB" in window)) return;
   readFileHandle().then(function(handle) {
@@ -1356,6 +1611,7 @@ function tryRestoreFileHandle() {
   });
 }
 
+// 打开IndexedDB数据库（用于存储文件句柄）
 function openHandleDb() {
   return new Promise(function(resolve, reject) {
     var request = indexedDB.open(FILE_HANDLE_DB, 1);
@@ -1365,6 +1621,7 @@ function openHandleDb() {
   });
 }
 
+// 保存文件句柄到IndexedDB
 function saveFileHandle(handle) {
   return openHandleDb().then(function(db) {
     return new Promise(function(resolve, reject) {
@@ -1376,6 +1633,7 @@ function saveFileHandle(handle) {
   });
 }
 
+// 从IndexedDB读取文件句柄
 function readFileHandle() {
   return openHandleDb().then(function(db) {
     return new Promise(function(resolve, reject) {
@@ -1387,11 +1645,13 @@ function readFileHandle() {
   });
 }
 
+// 将日期转换为日期输入框的值格式（YYYY-MM-DD）
 function toDateInputValue(date) {
   var offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return offsetDate.toISOString().slice(0, 10);
 }
 
+// 格式化日期为中文格式（如：五月19日 星期一）
 function formatChineseDate(dateKey) {
   try {
     return new Intl.DateTimeFormat("zh-CN", {
@@ -1407,6 +1667,7 @@ function formatChineseDate(dateKey) {
   }
 }
 
+// 更新实时时钟显示
 function updateRealtimeClock() {
   try {
     els.daySummary.textContent = new Intl.DateTimeFormat("zh-CN", {
@@ -1424,6 +1685,7 @@ function updateRealtimeClock() {
   }
 }
 
+// 将时间字符串（HH:MM）转换为分钟数
 function timeToMinutes(time) {
   var parts = time.split(":");
   var hour = parseInt(parts[0], 10);
@@ -1431,6 +1693,7 @@ function timeToMinutes(time) {
   return hour * 60 + minute;
 }
 
+// 在时间上增加指定分钟数
 function addMinutes(time, minutes) {
   var next = timeToMinutes(time) + minutes;
   var hour = String(Math.floor(next / 60)).padStart(2, "0");
@@ -1438,10 +1701,12 @@ function addMinutes(time, minutes) {
   return hour + ":" + minute;
 }
 
+// 计算两个时间之间的分钟数
 function minutesBetween(start, end) {
   return timeToMinutes(end) - timeToMinutes(start);
 }
 
+// 格式化秒数为MM:SS格式
 function formatSeconds(seconds) {
   var safe = Math.max(0, seconds);
   var minutes = Math.floor(safe / 60);
@@ -1449,22 +1714,26 @@ function formatSeconds(seconds) {
   return String(minutes).padStart(2, "0") + ":" + String(rest).padStart(2, "0");
 }
 
+// 获取时间轴槽位大小（考虑缩放）
 function getSlotSize() {
   return config.rowHeight * timelineZoom;
 }
 
+// 获取任务显示的起始分钟数（相对于当天开始时间）
 function getDisplayStartMinutes(item, dayStart) {
   var record = findRecordForSchedule(item.id);
   var start = useActualTimes && record ? formatClock(record.actualStart) : item.start;
   return Math.max(0, timeToMinutes(start) - timeToMinutes(dayStart));
 }
 
+// 查找已安排任务的完成记录
 function findRecordForSchedule(scheduledId) {
   return data.records
     .filter(function(record) { return record.scheduledId === scheduledId; })
     .sort(function(a, b) { return new Date(b.actualEnd) - new Date(a.actualEnd); })[0];
 }
 
+// 格式化ISO时间为HH:MM格式
 function formatClock(isoTime) {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -1473,7 +1742,8 @@ function formatClock(isoTime) {
   }).format(new Date(isoTime));
 }
 
-function formatDuration(seconds) {
+// 格式化持续时间为易读格式（如：5分30秒）
+  function formatDuration(seconds) {
   var safe = Math.max(0, seconds || 0);
   var minutes = Math.floor(safe / 60);
   var rest = safe % 60;
@@ -1482,11 +1752,13 @@ function formatDuration(seconds) {
   return minutes + " 分 " + rest + " 秒";
 }
 
+// 格式化准确率为百分比
 function formatAccuracy(plannedMinutes, actualSeconds) {
   if (!actualSeconds) return "无法计算";
   return Math.round(((plannedMinutes * 60) / actualSeconds) * 100) + "%";
 }
 
+// 获取准确率信息（包含标签和状态）
 function getAccuracy(plannedMinutes, actualSeconds) {
   var plannedSeconds = plannedMinutes * 60;
   if (!actualSeconds || !plannedSeconds) {

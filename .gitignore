@@ -2,6 +2,8 @@ schedule.exe
 schedule
 schedule_armv7
 schedule_arm64
+schedule_linux_amd64
+schedule_linux_armv7
 web/
 data/*.json
 !data/.gitkeep
