@@ -1,11 +1,15 @@
+# 可执行文件
 schedule.exe
 schedule
 schedule_armv7
 schedule_arm64
 schedule_linux_amd64
 schedule_linux_armv7
+schedule_linux
+*.exe
+
+# 运行时生成的目录
 web/
-data/*.json
-!data/.gitkeep
+data/
 *.log
 .DS_Store

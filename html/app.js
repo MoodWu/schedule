@@ -33,6 +33,10 @@ var timelineZoom = 1;
 var timelineOrientation = "vertical";
 // 是否使用实际时间排序
 var useActualTimes = false;
+// 是否显示全天时间范围
+var isFullDayMode = false;
+// 每个卡片的显示状态（key=scheduledId，value=true表示显示准时率，false表示显示准确率）
+var cardRateStates = {};
 // 触摸事件相关变量
 var touchStartTaskId = null;
 var touchStartTime = 0;
@@ -224,9 +228,6 @@ var tickId = null;
 var fileHandle = null;
 var saveTimer = null;
 var draggedTaskId = null;
-var timelineZoom = 1;
-var timelineOrientation = "vertical";
-var useActualTimes = false;
 var touchStartTaskId = null;
 var touchStartTime = 0;
 var editingTaskId = null;
@@ -260,6 +261,7 @@ function onDOMReady() {
       timeline: document.querySelector("#timeline"),
       zoomOutBtn: document.querySelector("#zoomOutBtn"),
       zoomInBtn: document.querySelector("#zoomInBtn"),
+      toggleFullDayBtn: document.querySelector("#toggleFullDayBtn"),
       toggleAxisBtn: document.querySelector("#toggleAxisBtn"),
       actualOrderBtn: document.querySelector("#actualOrderBtn"),
       clearScheduleBtn: document.querySelector("#clearScheduleBtn"),
@@ -477,14 +479,53 @@ function wireEvents() {
   els.timeline.addEventListener("touchmove", handleTimelineTouchMove);
   els.timeline.addEventListener("touchend", handleTimelineTouchEnd);
   
-  // 缩放按钮事件
+  // 缩放按钮事件 - 添加边界检查，避免不必要的重渲染
   els.zoomOutBtn.addEventListener("click", function() {
-    timelineZoom = Math.max(config.minZoom, timelineZoom - config.zoomStep);
-    renderTimeline();
+    if (timelineZoom <= config.minZoom + 0.001) return;
+    var newZoom = Math.max(config.minZoom, timelineZoom - config.zoomStep);
+    if (newZoom < timelineZoom - 0.001) {
+      timelineZoom = newZoom;
+      renderTimeline();
+    }
   });
   els.zoomInBtn.addEventListener("click", function() {
-    timelineZoom = Math.min(config.maxZoom, timelineZoom + config.zoomStep);
+    if (timelineZoom >= config.maxZoom - 0.001) return;
+    var newZoom = Math.min(config.maxZoom, timelineZoom + config.zoomStep);
+    if (newZoom > timelineZoom + 0.001) {
+      timelineZoom = newZoom;
+      renderTimeline();
+    }
+  });
+  
+  // 切换全天时间范围
+  els.toggleFullDayBtn.addEventListener("click", function() {
+    var oldRange = getDayRange(currentDate);
+    var oldScrollLeft = els.timeline.scrollLeft;
+    var oldSlotSize = getSlotSize();
+    
+    var oldRangeStartMinutes = timeToMinutes(oldRange.start);
+    var viewStartMinutes = oldRangeStartMinutes + (oldScrollLeft / oldSlotSize) * config.slotMinutes;
+    
+    isFullDayMode = !isFullDayMode;
+    els.toggleFullDayBtn.classList.toggle("full-day-active", isFullDayMode);
+    
+    var newRange = getDayRange(currentDate);
+    var newSlotSize = getSlotSize();
+    
+    var newRangeStartMinutes = timeToMinutes(newRange.start);
+    var newRangeEndMinutes = timeToMinutes(newRange.end);
+    
+    renderSummary();
     renderTimeline();
+    
+    if (viewStartMinutes >= newRangeStartMinutes && viewStartMinutes <= newRangeEndMinutes) {
+      var newViewStartOffset = (viewStartMinutes - newRangeStartMinutes) / config.slotMinutes * newSlotSize;
+      var newRangeTotalMinutes = minutesBetween(newRange.start, newRange.end);
+      var newRangeTotalPixels = (newRangeTotalMinutes / config.slotMinutes) * newSlotSize;
+      els.timeline.scrollLeft = Math.max(0, Math.min(newViewStartOffset, newRangeTotalPixels - els.timeline.clientWidth));
+    } else {
+      els.timeline.scrollLeft = 0;
+    }
   });
   
   // 切换时间轴方向
@@ -514,18 +555,56 @@ function wireEvents() {
 }
 
 // 显示任务详情模态框
+// 格式化时长（小于1分钟显示秒，否则显示分钟）
+function formatDurationWithSeconds(seconds) {
+  if (seconds < 60) {
+    return seconds + "秒";
+  }
+  var minutes = Math.floor(seconds / 60);
+  var remainingSeconds = seconds % 60;
+  if (remainingSeconds > 0) {
+    return minutes + "分" + remainingSeconds + "秒";
+  }
+  return minutes + "分钟";
+}
+
 function showDetailModal(item, record) {
   els.modalTitle.textContent = item.title;
-  var info = item.start + " - " + item.end + " · " + item.duration + " 分钟";
+  var info = "计划：" + item.start + "-" + item.end + "，共" + item.duration + "分钟";
   if (record) {
-    var accuracy = getAccuracy(record.plannedDurationMinutes, record.actualDurationSeconds);
-    info += "\n准确率: " + accuracy.label;
-    info += "\n实际时间: " + formatClock(record.actualStart) + "-" + formatClock(record.actualEnd);
-    info += "\n实际耗时: " + formatDuration(record.actualDurationSeconds);
-    info += "\n暂停: " + formatDuration(record.interruptedSeconds);
+    // 计算暂停时间
+    var pausedSeconds = record.interruptedSeconds || 0;
+    var actualElapsedSeconds = record.actualElapsedSeconds || 0;
+    var actualDurationSeconds = record.actualDurationSeconds || 0;
+    
+    info += "\n实际：" + formatClock(record.actualStart) + "-" + formatClock(record.actualEnd);
+    info += "，共" + formatDurationWithSeconds(actualElapsedSeconds);
+    if (pausedSeconds > 0) {
+      info += "，暂停" + formatDurationWithSeconds(pausedSeconds);
+    }
+    info += "，实际执行" + formatDurationWithSeconds(actualDurationSeconds);
+    
+    // 计算准确率（保留正负号）
+    var plannedSeconds = record.plannedDurationMinutes * 60;
+    var accuracyRatio = plannedSeconds > 0 ? (actualDurationSeconds - plannedSeconds) / plannedSeconds : 0;
+    var accuracyPercent = Math.round(accuracyRatio * 100);
+    
+    // 计算准时率（保留正负号）
+    var punctualityRatio = plannedSeconds > 0 ? (actualElapsedSeconds - plannedSeconds) / plannedSeconds : 0;
+    var punctualityPercent = Math.round(punctualityRatio * 100);
+    
+    info += "\n计划准确率：" + accuracyPercent + "%，计划准时率：" + punctualityPercent + "%";
   }
   els.modalInfo.textContent = info;
-  els.modalDescription.textContent = item.description || "无任务说明";
+  
+  // 任务说明：如果有值保留换行，没有则不显示
+  if (item.description && item.description.trim()) {
+    els.modalDescription.textContent = item.description;
+    els.modalDescription.style.display = "block";
+  } else {
+    els.modalDescription.style.display = "none";
+  }
+  
   els.detailModal.removeAttribute("hidden");
 }
 
@@ -563,8 +642,26 @@ function render() {
 // 渲染页面摘要信息（日期、时间范围等）
 function renderSummary() {
   var range = getDayRange(currentDate);
+  var day = ensureDay(currentDate);
+  
   els.appTitle.textContent = formatChineseDate(currentDate);
-  els.timelineTitle.textContent = range.title;
+  
+  var totalCards = day.scheduled.length;
+  var visibleCards = 0;
+  
+  if (totalCards > 0) {
+    var rangeStartMinutes = timeToMinutes(range.start);
+    var rangeEndMinutes = timeToMinutes(range.end);
+    
+    visibleCards = day.scheduled.filter(function(scheduled) {
+      var taskStartMinutes = timeToMinutes(scheduled.start);
+      var durationMinutes = minutesBetween(scheduled.start, scheduled.end);
+      var taskEndMinutes = taskStartMinutes + durationMinutes;
+      return taskStartMinutes <= rangeEndMinutes && taskEndMinutes >= rangeStartMinutes;
+    }).length;
+  }
+  
+  els.timelineTitle.innerHTML = range.title + '<span class="card-count">(' + visibleCards + '/' + totalCards + ')</span>';
   els.timelineHint.textContent = range.start + " - " + range.end + "，把左侧任务拖到时间段中";
   updateRealtimeClock();
 }
@@ -676,6 +773,8 @@ function renderTimeline() {
   var range = getDayRange(currentDate);
   var day = ensureDay(currentDate);
   els.timeline.innerHTML = "";
+  els.timeline.scrollLeft = 0;
+  els.timeline.scrollTop = 0;
   els.timeline.classList.toggle("horizontal", timelineOrientation === "horizontal");
   els.toggleAxisBtn.classList.toggle("active", timelineOrientation === "horizontal");
   els.toggleAxisBtn.title = timelineOrientation === "horizontal" ? "纵向时间轴" : "横向时间轴";
@@ -695,12 +794,19 @@ function renderTimeline() {
   var slotCount = totalMinutes / config.slotMinutes;
   var slotSize = getSlotSize();
 
-  // 创建时间槽
+  // 创建时间槽 - 同时设置 height 和 minHeight，确保缩放时行高与计算值一致
+  // 注意：CSS 中的 min-height 会覆盖 JS 设置的 height，需要 JS 同时设置两者
   for (var index = 0; index < slotCount; index += 1) {
     var start = addMinutes(range.start, index * config.slotMinutes);
     var row = document.createElement("div");
     row.className = "time-row";
-    row.style.height = timelineOrientation === "vertical" ? slotSize + "px" : "100%";
+    if (timelineOrientation === "vertical") {
+      row.style.height = slotSize + "px";
+      row.style.minHeight = slotSize + "px";
+    } else {
+      row.style.height = "100%";
+      row.style.minHeight = "0";
+    }
     if (timelineOrientation === "horizontal") {
       row.style.left = index * slotSize + "px";
       row.style.width = slotSize + "px";
@@ -733,8 +839,18 @@ function renderTimeline() {
     return getDisplayStartMinutes(a, range.start) - getDisplayStartMinutes(b, range.start);
   }
 
+  var rangeStartMinutes = timeToMinutes(range.start);
+  var rangeEndMinutes = timeToMinutes(range.end);
+
+  var filteredScheduled = day.scheduled.filter(function(scheduled) {
+    var taskStartMinutes = timeToMinutes(scheduled.start);
+    var durationMinutes = minutesBetween(scheduled.start, scheduled.end);
+    var taskEndMinutes = taskStartMinutes + durationMinutes;
+    return taskStartMinutes <= rangeEndMinutes && taskEndMinutes >= rangeStartMinutes;
+  });
+
   var scheduledItems = assignScheduleLanes(
-    day.scheduled.slice().sort(sortSchedule),
+    filteredScheduled.slice().sort(sortSchedule),
     range.start
   );
 
@@ -765,9 +881,18 @@ function assignScheduleLanes(items, dayStart) {
   var lanes = [];
   var entries = items.map(function(item) {
     var record = findRecordForSchedule(item.id);
-    var start = getDisplayStartMinutes(item, dayStart);
-    var actualSeconds = record && record.actualDurationSeconds ? record.actualDurationSeconds : 0;
-    var duration = useActualTimes && record ? Math.max(5, Math.ceil(actualSeconds / 60)) : minutesBetween(item.start, item.end);
+    var start, duration;
+    
+    if (record && useActualTimes) {
+      var actualStartMinutes = timeToMinutes(formatClock(record.actualStart));
+      var actualEndMinutes = timeToMinutes(formatClock(record.actualEnd));
+      var dayStartMinutes = timeToMinutes(dayStart);
+      start = Math.max(0, actualStartMinutes - dayStartMinutes);
+      duration = Math.max(5, actualEndMinutes - actualStartMinutes);
+    } else {
+      start = getDisplayStartMinutes(item, dayStart);
+      duration = minutesBetween(item.start, item.end);
+    }
     var end = start + duration;
     var lane = lanes.findIndex(function(laneEnd) { return start >= laneEnd; });
     if (lane === -1) {
@@ -906,7 +1031,8 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   card.addEventListener("mouseup", function(event) {
     if (!isDragging) {
       var isButton = event.target && (event.target.tagName === "BUTTON" || event.target.closest("button"));
-      if (!isButton) {
+      var isAccuracyBox = event.target && event.target.closest(".accuracy-box");
+      if (!isButton && !isAccuracyBox) {
         showDetailModal(item, record);
       }
     }
@@ -914,7 +1040,8 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   card.addEventListener("click", function(event) {
     if (!isDragging) {
       var isButton = event.target && (event.target.tagName === "BUTTON" || event.target.closest("button"));
-      if (!isButton) {
+      var isAccuracyBox = event.target && event.target.closest(".accuracy-box");
+      if (!isButton && !isAccuracyBox) {
         showDetailModal(item, record);
       }
     }
@@ -924,7 +1051,8 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
     var touch = event.touches[0];
     var targetElement = document.elementFromPoint(touch.clientX, touch.clientY);
     var isButton = targetElement && (targetElement.tagName === "BUTTON" || targetElement.closest("button"));
-    if (!isButton) {
+    var isAccuracyBox = targetElement && targetElement.closest(".accuracy-box");
+    if (!isButton && !isAccuracyBox) {
       touchStartTime = Date.now();
     }
   });
@@ -933,7 +1061,8 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
     var touch = event.changedTouches[0];
     var targetElement = document.elementFromPoint(touch.clientX, touch.clientY);
     var isButton = targetElement && (targetElement.tagName === "BUTTON" || targetElement.closest("button"));
-    if (touchDuration < 200 && !isButton) {
+    var isAccuracyBox = targetElement && targetElement.closest(".accuracy-box");
+    if (touchDuration < 200 && !isButton && !isAccuracyBox) {
       showDetailModal(item, record);
     }
   });
@@ -982,12 +1111,28 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
     });
   }
   
-  var displayStartMinutes = getDisplayStartMinutes(item, dayStart);
-  var plannedMinutes = minutesBetween(item.start, item.end);
-  var actualSeconds = record && record.actualDurationSeconds ? record.actualDurationSeconds : 0;
-  var durationMinutes = useActualTimes && record ? Math.max(5, Math.ceil(actualSeconds / 60)) : plannedMinutes;
-  var offset = (displayStartMinutes / config.slotMinutes) * getSlotSize();
-  var size = Math.max(record ? 74 : 52, (durationMinutes / config.slotMinutes) * getSlotSize() - 6);
+  // 计算任务显示位置和大小
+  // 根据 useActualTimes 和任务完成状态决定使用计划时间还是实际时间
+  var displayStartMinutes;
+  var durationMinutes;
+  
+  if (record && useActualTimes) {
+    // 已完成任务且按实际时间模式，使用完整实际时间范围（实际开始到实际结束）
+    var actualStartMinutes = timeToMinutes(formatClock(record.actualStart));
+    var actualEndMinutes = timeToMinutes(formatClock(record.actualEnd));
+    var dayStartMinutes = timeToMinutes(dayStart);
+    displayStartMinutes = Math.max(0, actualStartMinutes - dayStartMinutes);
+    durationMinutes = Math.max(5, actualEndMinutes - actualStartMinutes);
+  } else {
+    // 未完成任务，或按计划时间模式，使用计划时间
+    displayStartMinutes = getDisplayStartMinutes(item, dayStart);
+    durationMinutes = minutesBetween(item.start, item.end);
+  }
+  
+  // 使用 Math.round 避免浮点数精度问题导致的位置偏移
+  var offset = Math.round((displayStartMinutes / config.slotMinutes) * getSlotSize());
+  var durationPixels = (durationMinutes / config.slotMinutes) * getSlotSize();
+  var size = Math.max(record ? 74 : 52, Math.round(durationPixels) - 6);
 
   if (timelineOrientation === "horizontal") {
     card.style.left = (offset + 3) + "px";
@@ -1007,21 +1152,98 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   title.textContent = item.title + " ";
   var detail = document.createElement("span");
   detail.className = "schedule-detail";
-  detail.textContent = item.start + " - " + item.end + " · " + item.duration + " 分钟";
+  
+  // 构建卡片上显示的信息
+  var detailText = "计划：" + item.start + "-" + item.end + " · " + item.duration + "分钟";
+  
+  if (record) {
+    // 已完成任务显示实际执行信息
+    var pausedSeconds = record.interruptedSeconds || 0;
+    var actualElapsedSeconds = record.actualElapsedSeconds || 0;
+    var actualDurationSeconds = record.actualDurationSeconds || 0;
+    
+    detailText += " 实际：" + formatClock(record.actualStart) + "-" + formatClock(record.actualEnd);
+    detailText += "，共" + formatDurationWithSeconds(actualElapsedSeconds);
+    if (pausedSeconds > 0) {
+      detailText += "，暂停" + formatDurationWithSeconds(pausedSeconds);
+    }
+    detailText += "，有效" + formatDurationWithSeconds(actualDurationSeconds);
+  }
+  
+  detail.textContent = detailText;
+  
+  // 构建鼠标悬停提示内容（设置到卡片的title属性）
+  var tooltipText = item.title + "\n"; // 第一行显示任务名称
+  tooltipText += "计划：" + item.start + "-" + item.end + "，共" + item.duration + "分钟";
+  
+  if (record) {
+    // 计算暂停时间
+    var pausedSeconds = record.interruptedSeconds || 0;
+    var actualElapsedSeconds = record.actualElapsedSeconds || 0;
+    var actualDurationSeconds = record.actualDurationSeconds || 0;
+    
+    tooltipText += "\n实际：" + formatClock(record.actualStart) + "-" + formatClock(record.actualEnd);
+    tooltipText += "，共" + formatDurationWithSeconds(actualElapsedSeconds);
+    if (pausedSeconds > 0) {
+      tooltipText += "，暂停" + formatDurationWithSeconds(pausedSeconds);
+    }
+    tooltipText += "，实际执行" + formatDurationWithSeconds(actualDurationSeconds);
+    
+    // 计算准确率和准时率
+    var plannedSeconds = record.plannedDurationMinutes * 60;
+    var accuracyRatio = plannedSeconds > 0 ? (actualDurationSeconds - plannedSeconds) / plannedSeconds : 0;
+    var accuracyPercent = Math.round(accuracyRatio * 100);
+    var punctualityRatio = plannedSeconds > 0 ? (actualElapsedSeconds - plannedSeconds) / plannedSeconds : 0;
+    var punctualityPercent = Math.round(punctualityRatio * 100);
+    
+    tooltipText += "\n准确率：" + accuracyPercent + "%，准时率：" + punctualityPercent + "%";
+  }
+  
+  // 添加任务说明（如果有）
+  if (item.description && item.description.trim()) {
+    tooltipText += "\n" + item.description;
+  }
+  
+  // 将悬停提示设置到卡片的title属性
+  card.title = tooltipText;
+  
   copy.appendChild(title);
   copy.appendChild(detail);
 
   if (record) {
     var accuracy = getAccuracy(record.plannedDurationMinutes, record.actualDurationSeconds);
-    var result = document.createElement("span");
-    result.className = "result-line";
-    result.textContent =
-      "实际时间 " + formatClock(record.actualStart) + "-" + formatClock(record.actualEnd) + " · 实际耗时 " + formatDuration(record.actualDurationSeconds);
-    copy.appendChild(result);
+    var punctuality = getPunctualityRate(record.plannedDurationMinutes, record.actualElapsedSeconds);
+    
+    // 获取当前卡片的显示状态（默认显示准确率）
+    var cardId = item.id;
+    if (cardRateStates[cardId] === undefined) {
+      cardRateStates[cardId] = false; // 默认显示准确率
+    }
+    var showPunctuality = cardRateStates[cardId];
+    
+    // 根据卡片状态决定显示准时率还是准确率
+    var currentRate = showPunctuality ? punctuality : accuracy;
+    var rateLabel = showPunctuality ? "准时率" : "准确率";
 
     var accuracyBox = document.createElement("div");
-    accuracyBox.className = "accuracy-box " + accuracy.status;
-    accuracyBox.innerHTML = "<span>准确率</span><strong>" + accuracy.label + "</strong>";
+    accuracyBox.className = "accuracy-box " + currentRate.status;
+    accuracyBox.style.position = "relative";
+    accuracyBox.addEventListener("click", function(event) {
+      event.stopPropagation();
+    });
+    
+    // 主方块（显示准确率或准时率）
+    var mainBox = document.createElement("div");
+    mainBox.className = "rate-main";
+    mainBox.innerHTML = "<span>" + rateLabel + "</span><strong>" + currentRate.label + "</strong>";
+    mainBox.addEventListener("click", function(event) {
+      event.stopPropagation();
+      // 切换当前卡片的显示状态
+      cardRateStates[cardId] = !cardRateStates[cardId];
+      renderTimeline();
+    });
+    accuracyBox.appendChild(mainBox);
+    
     card.appendChild(copy);
     card.appendChild(accuracyBox);
     return card;
@@ -1238,6 +1460,7 @@ function startTimer(item) {
     interruptedSeconds: 0,
     pauseStartedAt: null,
     state: "running",
+    startTime: Date.now(),  // 记录开始时间戳，用于精确计算剩余时间
   };
   showView("timer");
   startTicking();
@@ -1276,6 +1499,13 @@ function completeTimer() {
 
   var actualEnd = new Date();
   var actualStart = new Date(activeTimer.actualStart);
+  var actualElapsedSeconds = Math.max(0, Math.floor((actualEnd - actualStart) / 1000));
+  var actualDurationSeconds = Math.max(0, actualElapsedSeconds - activeTimer.interruptedSeconds);
+  
+  // 计算准确率和准时率
+  var accuracy = getAccuracy(activeTimer.plannedDurationMinutes, actualDurationSeconds);
+  var punctuality = getPunctualityRate(activeTimer.plannedDurationMinutes, actualElapsedSeconds);
+  
   var record = {
     id: activeTimer.id,
     scheduledId: activeTimer.scheduledId,
@@ -1287,10 +1517,14 @@ function completeTimer() {
     plannedDurationMinutes: activeTimer.plannedDurationMinutes,
     actualStart: activeTimer.actualStart,
     actualEnd: actualEnd.toISOString(),
-    actualElapsedSeconds: Math.max(0, Math.floor((actualEnd - actualStart) / 1000)),
-    actualDurationSeconds: Math.max(0, Math.floor((actualEnd - actualStart) / 1000) - activeTimer.interruptedSeconds),
+    actualElapsedSeconds: actualElapsedSeconds,
+    actualDurationSeconds: actualDurationSeconds,
     interruptCount: activeTimer.interruptCount,
     interruptedSeconds: activeTimer.interruptedSeconds,
+    accuracy: accuracy.label,
+    accuracyStatus: accuracy.status,
+    punctuality: punctuality.label,
+    punctualityStatus: punctuality.status,
   };
   data.records.push(record);
 
@@ -1342,7 +1576,11 @@ function startTicking() {
       return;
     }
     if (activeTimer.state === "running") {
-      activeTimer.remainingSeconds -= 1;
+      // 使用时间戳精确计算剩余时间，避免 setInterval 暂停导致的时间偏差
+      var elapsedSeconds = Math.floor((Date.now() - activeTimer.startTime) / 1000);
+      // 减去累计暂停时间
+      elapsedSeconds -= activeTimer.interruptedSeconds;
+      activeTimer.remainingSeconds = Math.max(-300, activeTimer.plannedDurationMinutes * 60 - elapsedSeconds);
     }
     renderTimer();
   }, 1000);
@@ -1367,6 +1605,10 @@ function showView(name) {
 
 // 确保日期数据存在
 function ensureDay(dateKey) {
+  // 如果 data 还未初始化，先使用默认数据
+  if (!data) {
+    data = deepClone(defaultData);
+  }
   if (!data.days[dateKey]) {
     data.days[dateKey] = {
       tasks: [],
@@ -1380,6 +1622,18 @@ function ensureDay(dateKey) {
 function getDayRange(dateKey) {
   var day = new Date(dateKey + "T00:00:00");
   var isWeekend = day.getDay() === 0 || day.getDay() === 6;
+  
+  // 全天模式：返回0:00-23:59
+  if (isFullDayMode) {
+    return {
+      isWeekend: isWeekend,
+      start: "00:00",
+      end: "23:59",
+      title: "全天安排"
+    };
+  }
+  
+  // 正常模式：根据工作日/周末返回配置的时间范围
   if (isWeekend) {
     return {
       isWeekend: isWeekend,
@@ -1461,6 +1715,8 @@ function loadFromServer() {
       }
       if (result.data) {
         data = result.data;
+        // 补齐缺少准确率和准时率的数据
+        fillMissingRates();
       } else {
         data = deepClone(defaultData);
       }
@@ -1714,9 +1970,10 @@ function formatSeconds(seconds) {
   return String(minutes).padStart(2, "0") + ":" + String(rest).padStart(2, "0");
 }
 
-// 获取时间轴槽位大小（考虑缩放）
+// 获取时间轴槽位大小（考虑缩放）- 添加配置未加载时的默认值检查
 function getSlotSize() {
-  return config.rowHeight * timelineZoom;
+  var rowHeight = config && config.rowHeight ? config.rowHeight : defaultConfig.rowHeight;
+  return rowHeight * timelineZoom;
 }
 
 // 获取任务显示的起始分钟数（相对于当天开始时间）
@@ -1759,14 +2016,111 @@ function formatAccuracy(plannedMinutes, actualSeconds) {
 }
 
 // 获取准确率信息（包含标签和状态）
+// 准确率 = 预计时长 / 有效时长 * 100%
+// 小于100%为红色(late)，等于100%为绿色(early)，大于100%为蓝色(over)
 function getAccuracy(plannedMinutes, actualSeconds) {
   var plannedSeconds = plannedMinutes * 60;
   if (!actualSeconds || !plannedSeconds) {
     return { label: "无法计算", status: "late" };
   }
-  var ratio = actualSeconds <= plannedSeconds ? actualSeconds / plannedSeconds : plannedSeconds / actualSeconds;
+  // 准确率 = 预计时长 / 有效时长 * 100%
+  var percentage = Math.round((plannedSeconds / actualSeconds) * 100);
+  // 小于100%为红色(late)，100%为绿色(early)，大于100%为蓝色(over)
+  var status;
+  if (percentage < 100) {
+    status = "late";
+  } else if (percentage === 100) {
+    status = "early";
+  } else {
+    status = "over";
+  }
   return {
-    label: Math.round(ratio * 100) + "%",
-    status: actualSeconds <= plannedSeconds ? "early" : "late",
+    label: percentage + "%",
+    status: status,
   };
+}
+
+// 获取准时率信息（包含标签和状态）
+// 准时率 = 预计时长 / 实际时长 * 100%
+// 小于100%为红色，100%为绿色，大于100%为蓝色
+function getPunctualityRate(plannedMinutes, actualElapsedSeconds) {
+  var plannedSeconds = plannedMinutes * 60;
+  if (!actualElapsedSeconds || !plannedSeconds) {
+    return { label: "无法计算", status: "late" };
+  }
+  // 准时率 = 预计时长 / 实际时长 * 100%
+  var percentage = Math.round((plannedSeconds / actualElapsedSeconds) * 100);
+  // 小于100%为红色(late)，100%为绿色(early)，大于100%为蓝色(over)
+  var status;
+  if (percentage < 100) {
+    status = "late";
+  } else if (percentage === 100) {
+    status = "early";
+  } else {
+    status = "over";
+  }
+  return {
+    label: percentage + "%",
+    status: status,
+  };
+}
+
+// 补齐缺少准确率和准时率的数据
+function fillMissingRates() {
+  if (!data || !data.records) return;
+  
+  var hasMissingData = false;
+  
+  data.records.forEach(function(record) {
+    // 检查是否缺少准确率数据
+    if (!record.accuracy || !record.accuracyStatus) {
+      var accuracy = getAccuracy(record.plannedDurationMinutes, record.actualDurationSeconds);
+      record.accuracy = accuracy.label;
+      record.accuracyStatus = accuracy.status;
+      hasMissingData = true;
+    }
+    
+    // 检查是否缺少准时率数据
+    if (!record.punctuality || !record.punctualityStatus) {
+      var punctuality = getPunctualityRate(record.plannedDurationMinutes, record.actualElapsedSeconds);
+      record.punctuality = punctuality.label;
+      record.punctualityStatus = punctuality.status;
+      hasMissingData = true;
+    }
+  });
+  
+  // 如果有数据被补齐，保存到服务器
+  if (hasMissingData) {
+    saveToServer();
+    console.log("已补齐缺失的准确率和准时率数据");
+  }
+}
+
+// 重新计算所有数据的准确率和准时率（用于算法更新后重新计算）
+// 调用方式：recalculateAllRates()
+function recalculateAllRates() {
+  if (!data || !data.records) return;
+  
+  var recordCount = data.records.length;
+  
+  data.records.forEach(function(record) {
+    // 重新计算准确率
+    var accuracy = getAccuracy(record.plannedDurationMinutes, record.actualDurationSeconds);
+    record.accuracy = accuracy.label;
+    record.accuracyStatus = accuracy.status;
+    
+    // 重新计算准时率
+    var punctuality = getPunctualityRate(record.plannedDurationMinutes, record.actualElapsedSeconds);
+    record.punctuality = punctuality.label;
+    record.punctualityStatus = punctuality.status;
+  });
+  
+  // 保存到服务器
+  saveToServer();
+  console.log("已重新计算所有 " + recordCount + " 条记录的准确率和准时率");
+  
+  // 重新渲染界面
+  render();
+  
+  return recordCount;
 }
