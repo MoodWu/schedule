@@ -518,6 +518,10 @@ select {
   color: #b23838;
 }
 
+.accuracy-box.over {
+  color: #3b82f6;
+}
+
 .task-card button {
   width: 28px;
   height: 28px;
@@ -555,6 +559,13 @@ select {
 .timeline-header h2,
 .timeline-header p {
   white-space: normal;
+}
+
+.timeline-header h2 .card-count {
+  font-weight: normal;
+  font-size: 0.75em;
+  color: var(--muted);
+  margin-left: 8px;
 }
 
 .timeline-controls {
@@ -1166,6 +1177,8 @@ select {
   font-size: 14px;
   color: #666;
   margin-bottom: 16px;
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 .modal-content #modalDescription {
@@ -1175,3 +1188,28 @@ select {
   word-break: break-word;
   color: #333;
 }
+
+/* 按钮按下效果 */
+.icon-button.active {
+  background: var(--accent-dark);
+  color: #fff;
+  border-color: var(--accent-dark);
+}
+
+.icon-button.full-day-active {
+  border-color: var(--accent-dark);
+  background: transparent;
+  color: var(--accent-dark);
+}
+
+/* 准确率主方块 */
+.rate-main {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: center;
+  height: 100%;
+  width: 100%;
+}
+
+
