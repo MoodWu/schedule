@@ -772,9 +772,11 @@ function renderTaskList() {
 function renderTimeline() {
   var range = getDayRange(currentDate);
   var day = ensureDay(currentDate);
+  var savedScrollLeft = els.timeline.scrollLeft;
+  var savedScrollTop = els.timeline.scrollTop;
   els.timeline.innerHTML = "";
-  els.timeline.scrollLeft = 0;
-  els.timeline.scrollTop = 0;
+  els.timeline.scrollLeft = savedScrollLeft;
+  els.timeline.scrollTop = savedScrollTop;
   els.timeline.classList.toggle("horizontal", timelineOrientation === "horizontal");
   els.toggleAxisBtn.classList.toggle("active", timelineOrientation === "horizontal");
   els.toggleAxisBtn.title = timelineOrientation === "horizontal" ? "纵向时间轴" : "横向时间轴";
@@ -874,6 +876,9 @@ function renderTimeline() {
   indicator.hidden = true;
   indicator.innerHTML = '<span></span>';
   els.timeline.appendChild(indicator);
+
+  els.timeline.scrollLeft = savedScrollLeft;
+  els.timeline.scrollTop = savedScrollTop;
 }
 
 // 为已安排任务分配显示轨道（避免重叠）
@@ -1011,9 +1016,10 @@ function hideDropIndicator() {
 function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   if (lane === undefined) lane = 0;
   if (laneCount === undefined) laneCount = 1;
-  
+
   var card = document.createElement("article");
   card.className = "scheduled-card " + (record ? "completed" : item.type);
+  card.id = "scheduled-card-" + item.id;
   card.title = buildScheduleTip(item, record);
   
   var isTaskStarted = activeTimer && activeTimer.itemId === item.id;
@@ -1238,9 +1244,8 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
     mainBox.innerHTML = "<span>" + rateLabel + "</span><strong>" + currentRate.label + "</strong>";
     mainBox.addEventListener("click", function(event) {
       event.stopPropagation();
-      // 切换当前卡片的显示状态
       cardRateStates[cardId] = !cardRateStates[cardId];
-      renderTimeline();
+      updateCardRateDisplay(cardId);
     });
     accuracyBox.appendChild(mainBox);
     
@@ -2118,9 +2123,38 @@ function recalculateAllRates() {
   // 保存到服务器
   saveToServer();
   console.log("已重新计算所有 " + recordCount + " 条记录的准确率和准时率");
-  
+
   // 重新渲染界面
   render();
-  
+
   return recordCount;
+}
+
+function updateCardRateDisplay(cardId) {
+  var card = document.getElementById("scheduled-card-" + cardId);
+  if (!card) return;
+
+  var day = ensureDay(currentDate);
+  var item = day.scheduled.find(function(s) { return s.id === cardId; });
+  if (!item) return;
+
+  var record = findRecordForSchedule(cardId);
+  if (!record) return;
+
+  var accuracy = getAccuracy(record.plannedDurationMinutes, record.actualDurationSeconds);
+  var punctuality = getPunctualityRate(record.plannedDurationMinutes, record.actualElapsedSeconds);
+
+  var showPunctuality = cardRateStates[cardId];
+  var currentRate = showPunctuality ? punctuality : accuracy;
+  var rateLabel = showPunctuality ? "准时率" : "准确率";
+
+  var mainBox = card.querySelector(".rate-main");
+  if (mainBox) {
+    mainBox.innerHTML = "<span>" + rateLabel + "</span><strong>" + currentRate.label + "</strong>";
+  }
+
+  var accuracyBox = card.querySelector(".accuracy-box");
+  if (accuracyBox) {
+    accuracyBox.className = "accuracy-box " + currentRate.status;
+  }
 }
