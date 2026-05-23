@@ -584,14 +584,12 @@ function showDetailModal(item, record) {
     }
     info += "，实际执行" + formatDurationWithSeconds(actualDurationSeconds);
     
-    // 计算准确率（保留正负号）
+    // 计算准确率（与卡片一致：预计时长 / 有效时长 * 100%）
     var plannedSeconds = record.plannedDurationMinutes * 60;
-    var accuracyRatio = plannedSeconds > 0 ? (actualDurationSeconds - plannedSeconds) / plannedSeconds : 0;
-    var accuracyPercent = Math.round(accuracyRatio * 100);
+    var accuracyPercent = actualDurationSeconds > 0 ? Math.round((plannedSeconds / actualDurationSeconds) * 100) : 0;
     
-    // 计算准时率（保留正负号）
-    var punctualityRatio = plannedSeconds > 0 ? (actualElapsedSeconds - plannedSeconds) / plannedSeconds : 0;
-    var punctualityPercent = Math.round(punctualityRatio * 100);
+    // 计算准时率（与卡片一致：预计时长 / 实际时长 * 100%）
+    var punctualityPercent = actualElapsedSeconds > 0 ? Math.round((plannedSeconds / actualElapsedSeconds) * 100) : 0;
     
     info += "\n计划准确率：" + accuracyPercent + "%，计划准时率：" + punctualityPercent + "%";
   }
