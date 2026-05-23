@@ -2030,14 +2030,12 @@ function getAccuracy(plannedMinutes, actualSeconds) {
   }
   // 准确率 = 预计时长 / 有效时长 * 100%
   var percentage = Math.round((plannedSeconds / actualSeconds) * 100);
-  // 小于100%为红色(late)，100%为绿色(early)，大于100%为蓝色(over)
+  // 95~105%为绿色(early)，其他为黑色(late)
   var status;
-  if (percentage < 100) {
-    status = "late";
-  } else if (percentage === 100) {
+  if (percentage >= 95 && percentage <= 105) {
     status = "early";
   } else {
-    status = "over";
+    status = "late";
   }
   return {
     label: percentage + "%",
@@ -2055,14 +2053,12 @@ function getPunctualityRate(plannedMinutes, actualElapsedSeconds) {
   }
   // 准时率 = 预计时长 / 实际时长 * 100%
   var percentage = Math.round((plannedSeconds / actualElapsedSeconds) * 100);
-  // 小于100%为红色(late)，100%为绿色(early)，大于100%为蓝色(over)
+  // 95~105%为绿色(early)，其他为黑色(late)
   var status;
-  if (percentage < 100) {
-    status = "late";
-  } else if (percentage === 100) {
+  if (percentage >= 95 && percentage <= 105) {
     status = "early";
   } else {
-    status = "over";
+    status = "late";
   }
   return {
     label: percentage + "%",

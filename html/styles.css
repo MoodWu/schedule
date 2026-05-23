@@ -515,7 +515,7 @@ select {
 }
 
 .accuracy-box.late {
-  color: #b23838;
+  color: #000000;
 }
 
 .accuracy-box.over {
