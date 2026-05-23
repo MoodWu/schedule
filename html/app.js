@@ -1585,7 +1585,7 @@ function startTicking() {
       var elapsedSeconds = Math.floor((Date.now() - activeTimer.startTime) / 1000);
       // 减去累计暂停时间
       elapsedSeconds -= activeTimer.interruptedSeconds;
-      activeTimer.remainingSeconds = Math.max(-300, activeTimer.plannedDurationMinutes * 60 - elapsedSeconds);
+      activeTimer.remainingSeconds = activeTimer.plannedDurationMinutes * 60 - elapsedSeconds;
     }
     renderTimer();
   }, 1000);
