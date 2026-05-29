@@ -316,8 +316,13 @@ function wireEvents() {
   els.timerTab.addEventListener("click", function() { showView("timer"); });
   els.dateInput.addEventListener("change", function() {
     currentDate = els.dateInput.value || toDateInputValue(new Date());
+    if (activeTimer) {
+      activeTimer = null;
+      stopTicking();
+    }
     ensureDay(currentDate);
     render();
+    restoreActiveTimer();
   });
 
   els.toggleTaskFormBtn.addEventListener("click", toggleTaskForm);
@@ -882,6 +887,7 @@ function renderTimeline() {
 // 为已安排任务分配显示轨道（避免重叠）
 function assignScheduleLanes(items, dayStart) {
   var lanes = [];
+  var slotSize = getSlotSize();
   var entries = items.map(function(item) {
     var record = findRecordForSchedule(item.id);
     var start, duration;
@@ -896,7 +902,15 @@ function assignScheduleLanes(items, dayStart) {
       start = getDisplayStartMinutes(item, dayStart);
       duration = minutesBetween(item.start, item.end);
     }
-    var end = start + duration;
+    
+    var durationPixels = (duration / config.slotMinutes) * slotSize;
+    var cardHeightPixels = Math.max(record ? 74 : 52, Math.round(durationPixels) - 6);
+    var cardHeightMinutes = (cardHeightPixels / slotSize) * config.slotMinutes;
+    
+    var timeEnd = start + duration;
+    var pixelEnd = start + cardHeightMinutes;
+    var end = Math.max(timeEnd, pixelEnd);
+    
     var lane = lanes.findIndex(function(laneEnd) { return start >= laneEnd; });
     if (lane === -1) {
       lane = lanes.length;
@@ -907,14 +921,23 @@ function assignScheduleLanes(items, dayStart) {
     return { item: item, record: record, start: start, end: end, lane: lane, laneCount: 1 };
   });
 
+  // 为每个卡片计算其时间范围内实际并行的轨道数
   entries.forEach(function(entry) {
-    entry.laneCount = entries.filter(function(other) { return entry.start < other.end && entry.end > other.start; }).length;
+    var maxConcurrent = 1;
+    for (var t = entry.start; t < entry.end; t += 1) {
+      var concurrent = 0;
+      for (var j = 0; j < entries.length; j++) {
+        if (entries[j].start <= t && entries[j].end > t) {
+          concurrent++;
+        }
+      }
+      if (concurrent > maxConcurrent) {
+        maxConcurrent = concurrent;
+      }
+    }
+    entry.laneCount = maxConcurrent;
   });
 
-  var maxLaneCount = Math.max(1, lanes.length);
-  entries.forEach(function(entry) {
-    entry.laneCount = maxLaneCount;
-  });
   return entries;
 }
 
@@ -1136,7 +1159,13 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
   // 使用 Math.round 避免浮点数精度问题导致的位置偏移
   var offset = Math.round((displayStartMinutes / config.slotMinutes) * getSlotSize());
   var durationPixels = (durationMinutes / config.slotMinutes) * getSlotSize();
-  var size = Math.max(record ? 74 : 52, Math.round(durationPixels) - 6);
+  
+  var size;
+  if (record) {
+    size = 86;
+  } else {
+    size = Math.max(52, Math.round(durationPixels) - 6);
+  }
 
   if (timelineOrientation === "horizontal") {
     card.style.left = (offset + 3) + "px";
@@ -1193,14 +1222,12 @@ function renderScheduledCard(item, dayStart, record, lane, laneCount) {
     }
     tooltipText += "，实际执行" + formatDurationWithSeconds(actualDurationSeconds);
     
-    // 计算准确率和准时率
+    // 计算准确率和准时率（与弹窗一致）
     var plannedSeconds = record.plannedDurationMinutes * 60;
-    var accuracyRatio = plannedSeconds > 0 ? (actualDurationSeconds - plannedSeconds) / plannedSeconds : 0;
-    var accuracyPercent = Math.round(accuracyRatio * 100);
-    var punctualityRatio = plannedSeconds > 0 ? (actualElapsedSeconds - plannedSeconds) / plannedSeconds : 0;
-    var punctualityPercent = Math.round(punctualityRatio * 100);
-    
-    tooltipText += "\n准确率：" + accuracyPercent + "%，准时率：" + punctualityPercent + "%";
+    var accuracyPercent = actualDurationSeconds > 0 ? Math.round((plannedSeconds / actualDurationSeconds) * 100) : 0;
+    var punctualityPercent = actualElapsedSeconds > 0 ? Math.round((plannedSeconds / actualElapsedSeconds) * 100) : 0;
+
+    tooltipText += "\n计划准确率：" + accuracyPercent + "%，计划准时率：" + punctualityPercent + "%";
   }
   
   // 添加任务说明（如果有）
@@ -1447,6 +1474,7 @@ function scheduleTask(taskId, start) {
 
 // 开始任务计时器
 function startTimer(item) {
+  var now = new Date().toISOString();
   activeTimer = {
     id: generateUUID(),
     itemId: item.id,
@@ -1457,14 +1485,26 @@ function startTimer(item) {
     plannedStart: item.start,
     plannedEnd: item.end,
     plannedDurationMinutes: item.duration,
-    actualStart: new Date().toISOString(),
+    actualStart: now,
     remainingSeconds: item.duration * 60,
     interruptCount: 0,
     interruptedSeconds: 0,
     pauseStartedAt: null,
     state: "running",
-    startTime: Date.now(),  // 记录开始时间戳，用于精确计算剩余时间
+    startTime: Date.now(),
   };
+
+  var day = ensureDay(currentDate);
+  var scheduledItem = day.scheduled.find(function(s) { return s.id === item.id; });
+  if (scheduledItem) {
+    scheduledItem.timerState = "running";
+    scheduledItem.timerStartedAt = now;
+    scheduledItem.timerPausedAt = null;
+    scheduledItem.timerInterruptCount = 0;
+    scheduledItem.timerInterruptedSeconds = 0;
+    scheduledItem.timerActualStart = now;
+  }
+
   showView("timer");
   startTicking();
   persistAndRender();
@@ -1475,6 +1515,14 @@ function pauseTimer() {
   if (!activeTimer || activeTimer.state !== "running") return;
   activeTimer.state = "paused";
   activeTimer.pauseStartedAt = Date.now();
+
+  var day = ensureDay(activeTimer.date);
+  var scheduledItem = day.scheduled.find(function(s) { return s.id === activeTimer.scheduledId; });
+  if (scheduledItem) {
+    scheduledItem.timerState = "paused";
+    scheduledItem.timerPausedAt = new Date().toISOString();
+  }
+
   stopTicking();
   startTicking();
   persistAndRender();
@@ -1488,6 +1536,16 @@ function resumeTimer() {
   activeTimer.interruptedSeconds += pausedFor;
   activeTimer.pauseStartedAt = null;
   activeTimer.state = "running";
+
+  var day = ensureDay(activeTimer.date);
+  var scheduledItem = day.scheduled.find(function(s) { return s.id === activeTimer.scheduledId; });
+  if (scheduledItem) {
+    scheduledItem.timerState = "running";
+    scheduledItem.timerInterruptCount = activeTimer.interruptCount;
+    scheduledItem.timerInterruptedSeconds = activeTimer.interruptedSeconds;
+    scheduledItem.timerPausedAt = null;
+  }
+
   persistAndRender();
 }
 
@@ -1535,6 +1593,12 @@ function completeTimer() {
   var scheduled = day.scheduled.find(function(item) { return item.id === activeTimer.scheduledId; });
   if (scheduled) {
     scheduled.completedRecordId = record.id;
+    scheduled.timerState = null;
+    scheduled.timerStartedAt = null;
+    scheduled.timerPausedAt = null;
+    scheduled.timerInterruptCount = null;
+    scheduled.timerInterruptedSeconds = null;
+    scheduled.timerActualStart = null;
   }
 
   activeTimer = null;
@@ -1595,6 +1659,112 @@ function stopTicking() {
     clearInterval(tickId);
     tickId = null;
   }
+}
+
+// 从已保存的数据中恢复运行中的计时器
+function restoreActiveTimer() {
+  if (activeTimer) return;
+  if (!data || !data.days) return;
+
+  var today = data.days[currentDate];
+  if (!today || !today.scheduled) return;
+
+  var runningTask = today.scheduled.find(function(item) {
+    return item.timerState === "running" || item.timerState === "paused";
+  });
+
+  if (!runningTask) return;
+
+  var todayDate = new Date();
+  todayDate.setHours(0, 0, 0, 0);
+  var selectedDate = new Date(currentDate);
+  selectedDate.setHours(0, 0, 0, 0);
+
+  if (selectedDate < todayDate) {
+    completePastTask(runningTask);
+    return;
+  }
+
+  var timerState = runningTask.timerState;
+  var now = Date.now();
+  var actualStart = new Date(runningTask.timerActualStart).getTime();
+  var interruptedSeconds = runningTask.timerInterruptedSeconds || 0;
+  var interruptCount = runningTask.timerInterruptCount || 0;
+  var pauseStartedAt = null;
+
+  if (timerState === "paused" && runningTask.timerPausedAt) {
+    pauseStartedAt = new Date(runningTask.timerPausedAt).getTime();
+  }
+
+  var elapsedSeconds = Math.floor((now - actualStart) / 1000);
+  elapsedSeconds -= interruptedSeconds;
+  var remainingSeconds = runningTask.duration * 60 - elapsedSeconds;
+
+  activeTimer = {
+    id: generateUUID(),
+    itemId: runningTask.id,
+    scheduledId: runningTask.id,
+    date: currentDate,
+    title: runningTask.title,
+    type: runningTask.type,
+    plannedStart: runningTask.start,
+    plannedEnd: runningTask.end,
+    plannedDurationMinutes: runningTask.duration,
+    actualStart: runningTask.timerActualStart,
+    remainingSeconds: remainingSeconds,
+    interruptCount: interruptCount,
+    interruptedSeconds: interruptedSeconds,
+    pauseStartedAt: pauseStartedAt,
+    state: timerState,
+    startTime: actualStart,
+  };
+
+  showView("timer");
+  startTicking();
+}
+
+// 完成过去日期的未完成任务
+function completePastTask(task) {
+  var day = ensureDay(currentDate);
+  var actualEnd = new Date(currentDate + "T23:59:59");
+  var actualStart = new Date(task.timerActualStart);
+  var actualElapsedSeconds = Math.max(0, Math.floor((actualEnd - actualStart) / 1000));
+  var actualDurationSeconds = Math.max(0, actualElapsedSeconds - (task.timerInterruptedSeconds || 0));
+
+  var accuracy = getAccuracy(task.duration, actualDurationSeconds);
+  var punctuality = getPunctualityRate(task.duration, actualElapsedSeconds);
+
+  var record = {
+    id: generateUUID(),
+    scheduledId: task.id,
+    date: currentDate,
+    title: task.title,
+    type: task.type,
+    plannedStart: task.start,
+    plannedEnd: task.end,
+    plannedDurationMinutes: task.duration,
+    actualStart: task.timerActualStart,
+    actualEnd: actualEnd.toISOString(),
+    actualElapsedSeconds: actualElapsedSeconds,
+    actualDurationSeconds: actualDurationSeconds,
+    interruptCount: task.timerInterruptCount || 0,
+    interruptedSeconds: task.timerInterruptedSeconds || 0,
+    accuracy: accuracy.label,
+    accuracyStatus: accuracy.status,
+    punctuality: punctuality.label,
+    punctualityStatus: punctuality.status,
+  };
+  data.records.push(record);
+
+  task.completedRecordId = record.id;
+  task.timerState = null;
+  task.timerStartedAt = null;
+  task.timerPausedAt = null;
+  task.timerInterruptCount = null;
+  task.timerInterruptedSeconds = null;
+  task.timerActualStart = null;
+
+  persistAndRender();
 }
 
 // 切换视图（日程/计时器）
@@ -1718,12 +1888,12 @@ function loadFromServer() {
       }
       if (result.data) {
         data = result.data;
-        // 补齐缺少准确率和准时率的数据
         fillMissingRates();
       } else {
         data = deepClone(defaultData);
       }
       render();
+      restoreActiveTimer();
       if (els.saveStatus) {
         els.saveStatus.textContent = "已从服务器加载";
       }

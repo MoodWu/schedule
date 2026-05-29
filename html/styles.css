@@ -481,14 +481,15 @@ select {
 }
 
 .accuracy-box {
-  align-self: center;
+  align-self: start;
+  justify-self: end;
   display: grid;
   grid-template-rows: auto auto;
   align-content: center;
   justify-items: center;
-  height: min(100%, 58px);
+  height: 58px;
   width: 58px;
-  min-width: 0;
+  min-width: 58px;
   border-radius: 6px;
   padding: 6px;
   background: rgba(255, 255, 255, 0.64);
@@ -735,6 +736,13 @@ select {
   padding: 10px;
   pointer-events: auto;
   overflow: hidden;
+}
+
+.scheduled-card.compact {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
+  align-items: start;
+  min-height: 72px;
 }
 
 .timeline.horizontal .scheduled-card {
