@@ -1,4 +1,4 @@
-// 本地存储键名
+﻿// 本地存储键名
 var STORAGE_KEY = "child-schedule-data-v1";
 var FILE_HANDLE_DB = "child-schedule-file-db";
 var FILE_HANDLE_STORE = "handles";
@@ -52,6 +52,7 @@ var tickId = null;
 var fileHandle = null;
 // 自动保存定时器
 var saveTimer = null;
+var scrollToFirstTask = true;
 
 // 生成唯一标识符
 function generateUUID() {
@@ -321,6 +322,7 @@ function wireEvents() {
       stopTicking();
     }
     ensureDay(currentDate);
+    scrollToFirstTask = true;
     render();
     restoreActiveTimer();
   });
@@ -778,8 +780,6 @@ function renderTimeline() {
   var savedScrollLeft = els.timeline.scrollLeft;
   var savedScrollTop = els.timeline.scrollTop;
   els.timeline.innerHTML = "";
-  els.timeline.scrollLeft = savedScrollLeft;
-  els.timeline.scrollTop = savedScrollTop;
   els.timeline.classList.toggle("horizontal", timelineOrientation === "horizontal");
   els.toggleAxisBtn.classList.toggle("active", timelineOrientation === "horizontal");
   els.toggleAxisBtn.title = timelineOrientation === "horizontal" ? "纵向时间轴" : "横向时间轴";
@@ -880,8 +880,19 @@ function renderTimeline() {
   indicator.innerHTML = '<span></span>';
   els.timeline.appendChild(indicator);
 
-  els.timeline.scrollLeft = savedScrollLeft;
-  els.timeline.scrollTop = savedScrollTop;
+  // 恢复或设置滚动位置
+  if (scrollToFirstTask && scheduledItems.length > 0) {
+    // 使用 scrollIntoView 让第一个任务卡片滚动到可视区域顶部
+    var firstCardId = "scheduled-card-" + scheduledItems[0].item.id;
+    var firstCard = document.getElementById(firstCardId);
+    if (firstCard) {
+      firstCard.scrollIntoView({ block: "start", behavior: "instant" });
+    }
+    scrollToFirstTask = false;
+  } else {
+    els.timeline.scrollLeft = savedScrollLeft;
+    els.timeline.scrollTop = savedScrollTop;
+  }
 }
 
 // 为已安排任务分配显示轨道（避免重叠）
